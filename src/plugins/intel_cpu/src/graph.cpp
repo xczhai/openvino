@@ -40,6 +40,7 @@
 #include "utils/node_dumper.h"
 #include "utils/verbose.h"
 #include "utils/precision_support.h"
+#include "utils/profiler.hpp"
 
 #include <oneapi/dnnl/dnnl.hpp>
 #include "common/primitive_desc_iface.hpp"
@@ -1012,6 +1013,7 @@ bool Graph::ProcessDynNodes() {
 }
 
 void Graph::PushInputData(const std::size_t& index, const ov::SoPtr<ITensor>& input) {
+    PROFILE(_prof, "Graph::PushOutputData");
     if (!IsReady()) OPENVINO_THROW("Wrong state. Topology not ready.");
     auto input_itr = inputNodesMap.find(index);
     if (input_itr != inputNodesMap.end()) {
@@ -1044,6 +1046,7 @@ void Graph::PushInputData(const std::size_t& index, const ov::SoPtr<ITensor>& in
 
 // suppose always being shared infer_request intel_cpu::Tensor to Graph if isDynamic.
 void Graph::PullOutputData(std::unordered_map<std::size_t, ov::SoPtr<ITensor>>& output) {
+    PROFILE(_prof, "Graph::PullOutputData");
     if (!IsReady())
         OPENVINO_THROW("Wrong state. Topology not ready.");
 
@@ -1122,6 +1125,7 @@ void Graph::PullOutputData(std::unordered_map<std::size_t, ov::SoPtr<ITensor>>& 
 }
 
 void Graph::InferStatic(SyncInferRequest* request) {
+    PROFILE(_prof0, std::string("Graph::InferStatic_#") + std::to_string(infer_count));
     for (const auto& node : m_executableGraphNodes) {
         VERBOSE(node, getConfig().debugCaps.verbose);
         PERF(node, getConfig().collectPerfCounters);
@@ -1335,15 +1339,20 @@ public:
 
 template<typename UpdateStrategy>
 void Graph::InferDynamic(SyncInferRequest* request, UpdateStrategy&& update) {
+    PROFILE(_prof0, std::string("Graph::InferDynamic_#") + std::to_string(infer_count));
     size_t inferCounter = 0;
     for (auto stopIndx : m_executableSyncNodesInds) {
-        update(stopIndx);
+        {
+            PROFILE(_prof, "updateNodes");
+            update(stopIndx);
+        }
 
         for (; inferCounter < stopIndx; ++inferCounter) {
             auto& node = m_executableGraphNodes[inferCounter];
             VERBOSE(node, getConfig().debugCaps.verbose);
             PERF(node, getConfig().collectPerfCounters);
 
+            PROFILE(_prof, node->getTypeStr(), node->getName());
             if (request)
                 request->throw_if_canceled();
             try {
@@ -1396,7 +1405,8 @@ void Graph::Infer(SyncInferRequest* request) {
         OPENVINO_ASSERT(IsReady(), "Wrong state of the ov::intel_cpu::Graph. Topology is not ready: ", static_cast<int>(status));
     }
 
-    if (infer_count != -1) infer_count++;
+    // if (infer_count != -1) infer_count++;
+    infer_count++;
 }
 
 void Graph::SortTopologically() {
